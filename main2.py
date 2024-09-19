@@ -1,6 +1,9 @@
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import math
+from portfolio_env import PortfolioEnv  # Import the custom environment
+
 
 # Constants for RSI thresholds and portfolio management
 RSI_BUY = 30  # RSI value below which we consider buying
@@ -49,11 +52,12 @@ def execute_trade(date, action, price, shares_to_trade):
         current_cash += trade_cost
         log_trade(date, 'Sell', price, shares_to_trade, current_cash, current_shares)
 
-def log_trade(date, action, price, shares, cash, stock_holdings):
+def log_trade(date, ticker, action, price, shares, cash, stock_holdings):
     # Logs the details of a trade into a global trade log DataFrame
     global trade_log
     new_entry = {
         'Date': date,
+        'Ticker': ticker,
         'Action': action,
         'Price': price,
         'Shares': shares,
@@ -93,51 +97,82 @@ def visualize(data):
     plt.title('Stock Holdings and Stock Price Over Time')
     plt.show()
 
-# Load the stock data from the CSV file
-data_path = './data/HistoricalData_APPL.csv'
-APPL_data = pd.read_csv(data_path)
+# Constants for RSI thresholds and portfolio management
+RSI_BUY = 30  # RSI value below which we consider buying
+RSI_SELL = 70  # RSI value above which we consider selling
+PORTFOLIO_TRADE_PERCENTAGE = 0.01  # Percentage of portfolio to trade per transaction
+MINIMUM_TRADE = 100  # Minimum number of shares to trade
 
-# Clean the data: Convert 'Date' to datetime, remove '$' from financial columns, and convert to float
-APPL_data['Date'] = pd.to_datetime(APPL_data['Date'])
-financial_columns = ['Close/Last', 'Open', 'High', 'Low']
-for col in financial_columns:
-    APPL_data[col] = APPL_data[col].replace('[\\$,]', '', regex=True).astype(float)
+# Stock tickers to consider
+stock_tickers = ['AAPL', 'TSLA', 'GOOGL', 'NVDA']
 
-# Sort the data by date in ascending order
-APPL_data = APPL_data.sort_values(by='Date', ascending=True)
+# Dictionary to hold stock data for each ticker
+stock_data = {}
 
-# Add the RSI (Relative Strength Index) to the stock data
-APPL_data['RSI'] = calculate_rsi(APPL_data)
+# Load the stock data for each ticker (assuming CSV files exist for each ticker)
+for ticker in stock_tickers:
+    data_path = f'./data/HistoricalData_{ticker}.csv'
+    df = pd.read_csv(data_path)
 
-# Engage in trading based on the RSI values
+    # Clean the data: Convert 'Date' to datetime, remove '$' from financial columns, and convert to float
+    df['Date'] = pd.to_datetime(df['Date'])
+    financial_columns = ['Close/Last', 'Open', 'High', 'Low']
+    for col in financial_columns:
+        df[col] = df[col].replace('[\\$,]', '', regex=True).astype(float)
 
-# Initialize the logging DataFrame to store trade history
-columns = ['Date', 'Action', 'Price', 'Shares', 'Cash', 'Total Value', 'Stock Holdings']
-trade_log = pd.DataFrame(columns=columns)
-trade_log['Date'] = pd.to_datetime(trade_log['Date'])
+    # Sort the data by date in ascending order
+    df = df.sort_values(by='Date', ascending=True)
+
+    # Add the RSI (Relative Strength Index) to the stock data
+    df['RSI'] = calculate_rsi(df)
+
+    # Store the data in the dictionary
+    stock_data[ticker] = df
 
 # Get the full range of dates covered by the stock data
 all_dates = sorted(set().union(*[df.index for df in stock_data.values()]))
-# Assuming you start with some initial cash and no stocks
+# Initialize portfolio tracking variables
 initial_cash = 10000  # Example starting cash
 current_cash = initial_cash
-current_shares = 0
+current_shares = {ticker: 0 for ticker in stock_tickers}  # Dictionary to track shares for each stock
 
-# Loop through each row of stock data to evaluate and execute trades
-for index, row in APPL_data.iterrows():
-    stock_trading_price = row['Close/Last']
-    if should_buy(row):
-        shares_to_trade = calculate_trade_amount(stock_trading_price, current_shares)
-        execute_trade(row['Date'], 'buy', stock_trading_price, shares_to_trade)
+# Initialize the logging DataFrame to store trade history
+columns = ['Date', 'Ticker', 'Action', 'Price', 'Shares', 'Cash', 'Total Value', 'Stock Holdings']
+trade_log = pd.DataFrame(columns=columns)
+trade_log['Date'] = pd.to_datetime(trade_log['Date'])
 
-    elif should_sell(row):
-        shares_to_trade = calculate_trade_amount(stock_trading_price, current_shares)
-        execute_trade(row['Date'], 'sell', stock_trading_price, shares_to_trade)
+# Trade execution function to handle multiple stocks
+def execute_trade(date, ticker, action, price, shares_to_trade):
+    global current_cash, current_shares
+    trade_cost = price * shares_to_trade
+    if action == 'buy' and current_cash >= trade_cost:
+        # If buying, update shares and subtract the cost from cash
+        current_shares[ticker] += shares_to_trade
+        current_cash -= trade_cost
+        log_trade(date, ticker, 'Buy', price, shares_to_trade, current_cash, current_shares[ticker])
+    elif action == 'sell' and current_shares[ticker] >= shares_to_trade:
+        # If selling, update shares and add the proceeds to cash
+        current_shares[ticker] -= shares_to_trade
+        current_cash += trade_cost
+        log_trade(date, ticker, 'Sell', price, shares_to_trade, current_cash, current_shares[ticker])
     else:
-        log_trade(row['Date'], 'Hold', stock_trading_price, 0, current_cash, current_shares)
+        log_trade(date, ticker, 'Hold', price, 0, current_cash, current_shares[ticker])
+
+# Loop through each date, and for each date, evaluate all stocks
+for date in all_dates:
+    for ticker, df in stock_data.items():
+        if date in df.index:
+            row = df.loc[date]
+            stock_trading_price = row['Close/Last']
+            if should_buy(row):
+                shares_to_trade = calculate_trade_amount(stock_trading_price, current_shares[ticker])
+                execute_trade(date, ticker, 'buy', stock_trading_price, shares_to_trade)
+            elif should_sell(row):
+                shares_to_trade = calculate_trade_amount(stock_trading_price, current_shares[ticker])
+                execute_trade(date, ticker, 'sell', stock_trading_price, shares_to_trade)
+            else:
+                log_trade(date, ticker, 'Hold', stock_trading_price, 0, current_cash, current_shares[ticker])
 
 # Print the first 300 entries of the trade log to check the trades
-print(trade_log.head(300))
-visualize(trade_log)
-
-
+print(trade_log)
+#visualize(trade_log)
