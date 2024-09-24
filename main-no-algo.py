@@ -1,9 +1,6 @@
 
 import pandas as pd
-import matplotlib.pyplot as plt
 import math
-from portfolio_env import PortfolioEnv  # Import the custom environment
-
 
 # Constants for RSI thresholds and portfolio management
 RSI_BUY = 30  # RSI value below which we consider buying
@@ -39,39 +36,47 @@ def should_sell(row, sell_threshold=RSI_SELL):
 
 def execute_trade(date, action, price, shares_to_trade):
     # Executes a buy or sell trade, adjusting cash and shares accordingly
-    global current_cash, current_shares
+    global current_cash, portfolio
     trade_cost = price * shares_to_trade
     if action == 'buy' and current_cash >= trade_cost:
         # If buying, update shares and subtract the cost from cash
-        current_shares += shares_to_trade
+        portfolio += shares_to_trade
         current_cash -= trade_cost
-        log_trade(date, 'Buy', price, shares_to_trade, current_cash, current_shares)
-    elif action == 'sell' and current_shares >= shares_to_trade:
+        log_trade(date, 'Buy', price, shares_to_trade, current_cash, portfolio)
+    elif action == 'sell' and portfolio >= shares_to_trade:
         # If selling, update shares and add the sale proceeds to cash
-        current_shares -= shares_to_trade
+        portfolio -= shares_to_trade
         current_cash += trade_cost
-        log_trade(date, 'Sell', price, shares_to_trade, current_cash, current_shares)
+        log_trade(date, 'Sell', price, shares_to_trade, current_cash, portfolio)
 
-def log_trade(date, ticker, action, price, shares, cash, stock_holdings):
+def log_trade(date, ticker, action, price, shares_traded, cash, portfolio):
     # Logs the details of a trade into a global trade log DataFrame
+    ticker_shares = portfolio[ticker]
+    portfolio_size = 0
     global trade_log
+
+    for share in portfolio:
+        # Filter DataFrame for the date range
+        stock_price = stock_data[(stock_data['Date'] == date) & (stock_data['Ticker'] == ticker)]
+        portfolio_size += portfolio[ticker] * stock_price
+
     new_entry = {
         'Date': date,
         'Ticker': ticker,
         'Action': action,
         'Price': price,
-        'Shares': shares,
+        'Shares Traded': shares_traded,
         'Cash': cash,
-        'Total Value': cash + price * stock_holdings,  # Total value includes cash and stock value
-        'Stock Holdings': stock_holdings,
-        'All Time ROI': round(((cash + price * stock_holdings) - initial_cash) / initial_cash, 3)
+        'Portfolio ($)': cash + portfolio_size,  # Total value includes cash and stock value
+        'Stock Holdings': ticker_shares,
+        'All Time ROI': round(((cash + price * ticker_shares) - initial_cash) / initial_cash, 3)
     }
     trade_log = pd.concat([trade_log, pd.DataFrame([new_entry])], ignore_index=True)
 
-def calculate_trade_amount(price, current_shares):
+def calculate_trade_amount(price, portfolio):
     # Calculates the number of shares to trade based on portfolio trade percentage
-    if price * current_shares > 0:
-        return math.ceil((price * current_shares * PORTFOLIO_TRADE_PERCENTAGE) / price)
+    if price * portfolio > 0:
+        return math.ceil((price * portfolio * PORTFOLIO_TRADE_PERCENTAGE) / price)
     return MINIMUM_TRADE  # If no current shares, default to minimum trade amount
 
 def visualize(data):
@@ -134,29 +139,29 @@ all_dates = sorted(set().union(*[df.index for df in stock_data.values()]))
 # Initialize portfolio tracking variables
 initial_cash = 10000  # Example starting cash
 current_cash = initial_cash
-current_shares = {ticker: 0 for ticker in stock_tickers}  # Dictionary to track shares for each stock
+portfolio = {ticker: 0 for ticker in stock_tickers}  # Dictionary to track shares for each stock
 
 # Initialize the logging DataFrame to store trade history
-columns = ['Date', 'Ticker', 'Action', 'Price', 'Shares', 'Cash', 'Total Value', 'Stock Holdings']
+columns = ['Date', 'Ticker', 'Action', 'Price', 'Shares Traded', 'Cash', 'Portfolio($)', 'Stock Holdings', 'All Time ROI']
 trade_log = pd.DataFrame(columns=columns)
 trade_log['Date'] = pd.to_datetime(trade_log['Date'])
 
 # Trade execution function to handle multiple stocks
 def execute_trade(date, ticker, action, price, shares_to_trade):
-    global current_cash, current_shares
+    global current_cash, portfolio
     trade_cost = price * shares_to_trade
     if action == 'buy' and current_cash >= trade_cost:
         # If buying, update shares and subtract the cost from cash
-        current_shares[ticker] += shares_to_trade
+        portfolio[ticker] += shares_to_trade
         current_cash -= trade_cost
-        log_trade(date, ticker, 'Buy', price, shares_to_trade, current_cash, current_shares[ticker])
-    elif action == 'sell' and current_shares[ticker] >= shares_to_trade:
+        log_trade(date, ticker, 'Buy', price, shares_to_trade, current_cash, portfolio)
+    elif action == 'sell' and portfolio[ticker] >= shares_to_trade:
         # If selling, update shares and add the proceeds to cash
-        current_shares[ticker] -= shares_to_trade
+        portfolio[ticker] -= shares_to_trade
         current_cash += trade_cost
-        log_trade(date, ticker, 'Sell', price, shares_to_trade, current_cash, current_shares[ticker])
+        log_trade(date, ticker, 'Sell', price, shares_to_trade, current_cash, portfolio)
     else:
-        log_trade(date, ticker, 'Hold', price, 0, current_cash, current_shares[ticker])
+        log_trade(date, ticker, 'Hold', price, 0, current_cash, portfolio)
 
 # Loop through each date, and for each date, evaluate all stocks
 for date in all_dates:
@@ -165,13 +170,13 @@ for date in all_dates:
             row = df.loc[date]
             stock_trading_price = row['Close/Last']
             if should_buy(row):
-                shares_to_trade = calculate_trade_amount(stock_trading_price, current_shares[ticker])
+                shares_to_trade = calculate_trade_amount(stock_trading_price, portfolio[ticker])
                 execute_trade(date, ticker, 'buy', stock_trading_price, shares_to_trade)
             elif should_sell(row):
-                shares_to_trade = calculate_trade_amount(stock_trading_price, current_shares[ticker])
+                shares_to_trade = calculate_trade_amount(stock_trading_price, portfolio[ticker])
                 execute_trade(date, ticker, 'sell', stock_trading_price, shares_to_trade)
             else:
-                log_trade(date, ticker, 'Hold', stock_trading_price, 0, current_cash, current_shares[ticker])
+                log_trade(date, ticker, 'Hold', stock_trading_price, 0, current_cash, portfolio)
 
 # Print the first 300 entries of the trade log to check the trades
 print(trade_log)
