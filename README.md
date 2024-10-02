@@ -1,7 +1,3 @@
-Based on the contents of the repository, here is a suggested README file for your project:
-
----
-
 # CorporateMundo
 
 ## Overview
